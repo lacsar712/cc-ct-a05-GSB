@@ -28,16 +28,17 @@ class Command(BaseCommand):
 
         now = timezone.now()
         seeds = [
-            ("T01", 5, OffsetSubmission.Verdict.PASS),
-            ("T09", 20, OffsetSubmission.Verdict.FAIL),
+            ("T01", 5, OffsetSubmission.Verdict.PASS, 36),
+            ("T09", 20, OffsetSubmission.Verdict.FAIL, 38),
         ]
-        for tool_code, offset_um, verdict in seeds:
+        for tool_code, offset_um, verdict, spindle_temp_c in seeds:
             OffsetSubmission.objects.update_or_create(
                 tool_code=tool_code,
                 offset_um=offset_um,
                 defaults={
                     "status": OffsetSubmission.Status.DONE,
                     "verdict": verdict,
+                    "spindle_temp_c": spindle_temp_c,
                     "submitted_by": machinist,
                     "reviewed_at": now,
                 },

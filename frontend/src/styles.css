@@ -143,3 +143,12 @@ td {
   color: #b91c1c;
   font-weight: 600;
 }
+
+.required-field {
+  font-weight: 600;
+}
+
+.locked-temp {
+  color: #1e3a8a;
+  font-weight: 600;
+}

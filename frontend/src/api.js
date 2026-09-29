@@ -54,9 +54,20 @@ export function fetchSubmission(id) {
   return request(`/submissions/${id}`);
 }
 
-export function createSubmission(tool_code, offset_um) {
+export function fetchLockedTemps() {
+  return request("/temperature/locked");
+}
+
+export function createSubmission(tool_code, offset_um, spindle_temp_c) {
   return request("/submissions", {
     method: "POST",
-    body: JSON.stringify({ tool_code, offset_um: Number(offset_um) }),
+    body: JSON.stringify({
+      tool_code,
+      offset_um: Number(offset_um),
+      // 空串/缺省一律发 null，由后端整笔挡回并回统一文案
+      spindle_temp_c: spindle_temp_c === "" || spindle_temp_c == null
+        ? null
+        : Number(spindle_temp_c),
+    }),
   });
 }

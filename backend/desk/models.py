@@ -30,6 +30,8 @@ class OffsetSubmission(models.Model):
 
     tool_code = models.CharField(max_length=32, db_index=True)
     offset_um = models.IntegerField()
+    # 主轴温度（摄氏度）：送检必填，写入即锁死，旧单为 null
+    spindle_temp_c = models.IntegerField(null=True, blank=True)
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
