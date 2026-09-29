@@ -60,3 +60,14 @@ export function createSubmission(tool_code, offset_um) {
     body: JSON.stringify({ tool_code, offset_um: Number(offset_um) }),
   });
 }
+
+export function fetchTemperatures() {
+  return request("/temperatures");
+}
+
+export function recordTemperature(temp_c) {
+  return request("/temperatures", {
+    method: "POST",
+    body: JSON.stringify({ temp_c: Number(temp_c) }),
+  });
+}

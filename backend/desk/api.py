@@ -6,9 +6,12 @@ from ninja import NinjaAPI, Schema
 from ninja.errors import HttpError
 
 from desk.auth_utils import bearer_auth, create_access_token, verify_password
-from desk.models import OffsetSubmission, User
+from desk.models import OffsetSubmission, SpindleTemperature, User
 
-api = NinjaAPI(title="数控刀补复核台", version="1.0")
+api = NinjaAPI(title="数控刀补复核台", version="1.1")
+
+# 缺温挡回文案：页面投递与绕过页面的接口请求共用同一口径
+TEMP_REQUIRED_MESSAGE = "送检刀补必须填写主轴温度，请先到温感台录入主轴温度后再送检。"
 
 
 class HealthOut(Schema):
@@ -36,10 +39,22 @@ class SubmissionOut(Schema):
     id: int
     tool_code: str
     offset_um: int
+    spindle_temp_c: int
     status: str
     verdict: str
     created_at: datetime
     reviewed_at: Optional[datetime]
+
+
+class TemperatureIn(Schema):
+    temp_c: int
+
+
+class TemperatureOut(Schema):
+    id: int
+    temp_c: int
+    recorded_by: Optional[str]
+    created_at: datetime
 
 
 def _to_out(row: OffsetSubmission) -> SubmissionOut:
@@ -47,10 +62,20 @@ def _to_out(row: OffsetSubmission) -> SubmissionOut:
         id=row.id,
         tool_code=row.tool_code,
         offset_um=row.offset_um,
+        spindle_temp_c=row.spindle_temp_c,
         status=row.status,
         verdict=row.verdict or "",
         created_at=row.created_at,
         reviewed_at=row.reviewed_at,
+    )
+
+
+def _to_temp_out(row: SpindleTemperature) -> TemperatureOut:
+    return TemperatureOut(
+        id=row.id,
+        temp_c=row.temp_c,
+        recorded_by=row.recorded_by.username if row.recorded_by else None,
+        created_at=row.created_at,
     )
 
 
@@ -99,10 +124,36 @@ def create_submission(request: HttpRequest, body: SubmissionIn):
     tool_code = body.tool_code.strip()
     if not tool_code:
         raise HttpError(400, "刀具编号不能为空")
+    # 主轴温度为送检必填项：温感台尚无已锁定读数即缺温，整笔挡回。
+    # 不接受请求体私带温度，温度只能来自温感台已锁定记录。
+    latest_temp = SpindleTemperature.objects.order_by("-created_at", "-id").first()
+    if latest_temp is None:
+        raise HttpError(400, TEMP_REQUIRED_MESSAGE)
     row = OffsetSubmission.objects.create(
         tool_code=tool_code,
         offset_um=body.offset_um,
+        spindle_temp=latest_temp,
+        spindle_temp_c=latest_temp.temp_c,
         submitted_by=user,
         status=OffsetSubmission.Status.PENDING,
     )
     return _to_out(row)
+
+
+@api.get("/temperatures", response=list[TemperatureOut], auth=bearer_auth)
+def list_temperatures(request: HttpRequest):
+    rows = SpindleTemperature.objects.all()[:200]
+    return [_to_temp_out(r) for r in rows]
+
+
+@api.post("/temperatures", response=TemperatureOut, auth=bearer_auth)
+def create_temperature(request: HttpRequest, body: TemperatureIn):
+    user: User = request.auth
+    if not user.can_write:
+        raise HttpError(403, "当前账号只读，不能录入主轴温度")
+    # 只追加：一经写入即锁定，系统不提供任何修改、删除入口
+    row = SpindleTemperature.objects.create(
+        temp_c=body.temp_c,
+        recorded_by=user,
+    )
+    return _to_temp_out(row)

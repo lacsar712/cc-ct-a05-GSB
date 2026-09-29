@@ -18,6 +18,26 @@ class User(AbstractUser):
         return self.role == self.Role.MACHINIST
 
 
+class SpindleTemperature(models.Model):
+    """温感台读数。一经写入即锁定：不提供任何修改、删除入口。"""
+
+    temp_c = models.IntegerField()
+    recorded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="temperature_records",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.temp_c}℃ @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
 class OffsetSubmission(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "待复核"
@@ -30,6 +50,15 @@ class OffsetSubmission(models.Model):
 
     tool_code = models.CharField(max_length=32, db_index=True)
     offset_um = models.IntegerField()
+    # 主轴温度为送检必填项，落单时从温感台快照写入，事后温感台再写新值不动旧单
+    spindle_temp_c = models.IntegerField()
+    spindle_temp = models.ForeignKey(
+        SpindleTemperature,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="submissions",
+    )
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
@@ -56,4 +85,4 @@ class OffsetSubmission(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
-        return f"{self.tool_code} {self.offset_um}µm"
+        return f"{self.tool_code} {self.offset_um}µm {self.spindle_temp_c}℃"

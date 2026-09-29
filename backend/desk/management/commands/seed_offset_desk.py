@@ -4,6 +4,8 @@ from django.utils import timezone
 from desk.auth_utils import hash_password
 from desk.models import OffsetSubmission, User
 
+SEED_BASELINE_TEMP_C = 36
+
 
 class Command(BaseCommand):
     help = "创建默认账号与种子刀补记录"
@@ -26,6 +28,8 @@ class Command(BaseCommand):
             },
         )
 
+        # 温感台刻意留空：新环境首笔送检必须先到温感台录入温度，否则整笔挡回。
+        # 种子旧单只携带历史温度快照值，不产生温感台记录。
         now = timezone.now()
         seeds = [
             ("T01", 5, OffsetSubmission.Verdict.PASS),
@@ -40,6 +44,7 @@ class Command(BaseCommand):
                     "verdict": verdict,
                     "submitted_by": machinist,
                     "reviewed_at": now,
+                    "spindle_temp_c": SEED_BASELINE_TEMP_C,
                 },
             )
 

@@ -4,8 +4,10 @@ import {
   createSubmission,
   fetchSubmission,
   fetchSubmissions,
+  fetchTemperatures,
   getUser,
   login,
+  recordTemperature,
   setSession,
 } from "./api";
 
@@ -20,10 +22,15 @@ const roleLabel = {
   auditor: "复核员",
 };
 
+// 与后端完全一致的缺温挡回文案，页面拦截与接口挡回同一口径
+const TEMP_REQUIRED_MESSAGE =
+  "送检刀补必须填写主轴温度，请先到温感台录入主轴温度后再送检。";
+
 function readHash() {
   const raw = (location.hash || "#/").replace(/^#/, "") || "/";
-  const m = raw.match(/^\/detail\/(\d+)/);
+  let m = raw.match(/^\/detail\/(\d+)/);
   if (m) return { name: "detail", id: Number(m[1]) };
+  if (raw === "/thermal") return { name: "thermal", id: null };
   return { name: "home", id: null };
 }
 
@@ -31,6 +38,7 @@ function App() {
   const [user, setUser] = createSignal(getUser());
   const [rows, setRows] = createSignal([]);
   const [detail, setDetail] = createSignal(null);
+  const [temps, setTemps] = createSignal([]);
   const [route, setRoute] = createSignal(readHash());
   const [error, setError] = createSignal("");
   const [loading, setLoading] = createSignal(false);
@@ -40,9 +48,14 @@ function App() {
 
   const [toolCode, setToolCode] = createSignal("");
   const [offsetUm, setOffsetUm] = createSignal("");
+  const [tempInput, setTempInput] = createSignal("");
 
   function goHome() {
     location.hash = "#/";
+  }
+
+  function goThermal() {
+    location.hash = "#/thermal";
   }
 
   function goDetail(id) {
@@ -53,8 +66,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const data = await fetchSubmissions();
-      setRows(data);
+      setRows(await fetchSubmissions());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -75,10 +87,19 @@ function App() {
     }
   }
 
+  async function loadTemps() {
+    try {
+      setTemps(await fetchTemperatures());
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   onMount(() => {
     const onHash = () => setRoute(readHash());
     window.addEventListener("hashchange", onHash);
     if (user()) {
+      loadTemps();
       if (route().name === "detail") loadDetail(route().id);
       else loadRows();
     }
@@ -90,6 +111,7 @@ function App() {
     if (!user()) return;
     if (r.name === "detail" && r.id) loadDetail(r.id);
     if (r.name === "home") loadRows();
+    if (r.name === "thermal") loadTemps();
   });
 
   async function handleLogin(e) {
@@ -104,7 +126,7 @@ function App() {
       });
       setUser(getUser());
       goHome();
-      await loadRows();
+      await Promise.all([loadRows(), loadTemps()]);
     } catch (err) {
       setError(err.message);
     }
@@ -115,12 +137,18 @@ function App() {
     setUser(null);
     setRows([]);
     setDetail(null);
+    setTemps([]);
     goHome();
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    // 页面侧缺温整笔挡回，文案与接口挡回一致；绕过页面时后端同样挡回
+    if (!temps().length) {
+      setError(TEMP_REQUIRED_MESSAGE);
+      return;
+    }
     try {
       await createSubmission(toolCode(), offsetUm());
       setToolCode("");
@@ -131,12 +159,26 @@ function App() {
     }
   }
 
+  async function handleRecordTemp(e) {
+    e.preventDefault();
+    setError("");
+    try {
+      await recordTemperature(tempInput());
+      setTempInput("");
+      await loadTemps();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const latestTemp = () => (temps().length ? temps()[0].temp_c : null);
+
   return (
     <div class="page">
       <header class="topbar">
         <div class="brand">
           <h1>数控刀补复核台</h1>
-          <p class="hint">刀补绝对值不超过十二微米判合格，否则超差。后台认领进程用行锁跳过已占行领取待复核。</p>
+          <p class="hint">刀补绝对值不超过十二微米判合格，否则超差。送检刀补必须填写主轴温度。</p>
         </div>
         <Show when={user()}>
           <nav class="topnav">
@@ -149,6 +191,16 @@ function App() {
               }}
             >
               复核总览
+            </a>
+            <a
+              href="#/thermal"
+              class={route().name === "thermal" ? "active" : ""}
+              onClick={(e) => {
+                e.preventDefault();
+                goThermal();
+              }}
+            >
+              温感台
             </a>
           </nav>
         </Show>
@@ -198,6 +250,20 @@ function App() {
           <Show when={user().can_write}>
             <section class="card">
               <h2>提交刀补</h2>
+              <p class="hint">
+                送检必填主轴温度：请先到「温感台」录入温度，温度一经写入立即锁定，送检时自动取温感台最新已锁定读数。
+              </p>
+              <Show
+                when={latestTemp() !== null}
+                fallback={
+                  <p class="fail">
+                    {TEMP_REQUIRED_MESSAGE}
+                    请先 <a href="#/thermal" onClick={(e) => { e.preventDefault(); goThermal(); }}>前往温感台录入</a>。
+                  </p>
+                }
+              >
+                <p class="pass">当前温感台已锁定主轴温度：{latestTemp()}℃，送检将以此温度快照落单。</p>
+              </Show>
               <form onSubmit={handleSubmit} class="form inline">
                 <label>
                   刀具编号
@@ -234,6 +300,7 @@ function App() {
                 <tr>
                   <th>刀具</th>
                   <th>刀补 µm</th>
+                  <th>主轴温度 ℃</th>
                   <th>状态</th>
                   <th>结论</th>
                   <th>提交时间</th>
@@ -246,6 +313,7 @@ function App() {
                     <tr>
                       <td>{row.tool_code}</td>
                       <td>{row.offset_um}</td>
+                      <td>{row.spindle_temp_c}℃</td>
                       <td>{statusLabel[row.status] || row.status}</td>
                       <td class={row.verdict === "合格" ? "pass" : row.verdict === "超差" ? "fail" : ""}>
                         {row.verdict || "—"}
@@ -267,6 +335,63 @@ function App() {
           </section>
         </Show>
 
+        <Show when={route().name === "thermal"}>
+          <section class="card">
+            <h2>温感台</h2>
+            <p class="hint">
+              送检刀补必须填写主轴温度：录入主轴温度后才能送检。温度一经写入立即锁定，不可修改、不可删除；
+              后续送检自动取最新已锁定读数，历史送检单保留当时快照，事后改温不影响旧单。
+            </p>
+            <Show when={user().can_write} fallback={<p class="hint">当前为只读账号，仅可查看已锁定温度。</p>}>
+              <form onSubmit={handleRecordTemp} class="form inline">
+                <label>
+                  主轴温度（摄氏度）
+                  <input
+                    type="number"
+                    placeholder="如 36"
+                    value={tempInput()}
+                    onInput={(e) => setTempInput(e.currentTarget.value)}
+                    required
+                  />
+                </label>
+                <button type="submit">写入并锁定</button>
+              </form>
+            </Show>
+          </section>
+
+          <section class="card">
+            <div class="toolbar">
+              <h2>已锁定温度清单</h2>
+              <button type="button" class="ghost" onClick={loadTemps}>
+                刷新
+              </button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>主轴温度 ℃</th>
+                  <th>录入人</th>
+                  <th>录入时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={temps()}>
+                  {(t) => (
+                    <tr>
+                      <td>{t.temp_c}℃</td>
+                      <td>{t.recorded_by || "—"}</td>
+                      <td>{new Date(t.created_at).toLocaleString()}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+            <Show when={!temps().length}>
+              <p class="hint">温感台尚无读数——此时送检将被整笔挡回。</p>
+            </Show>
+          </section>
+        </Show>
+
         <Show when={route().name === "detail"}>
           <section class="card">
             <div class="toolbar">
@@ -281,6 +406,7 @@ function App() {
                   <p>编号：{d().id}</p>
                   <p>刀具：{d().tool_code}</p>
                   <p>刀补 µm：{d().offset_um}</p>
+                  <p>主轴温度 ℃：{d().spindle_temp_c}℃</p>
                   <p>状态：{statusLabel[d().status] || d().status}</p>
                   <p class={d().verdict === "合格" ? "pass" : d().verdict === "超差" ? "fail" : ""}>
                     结论：{d().verdict || "—"}
